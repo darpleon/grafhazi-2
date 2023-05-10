@@ -48,6 +48,34 @@ struct Sphere : public Intersectable {
 	}
 };
 
+struct Plane : public Intersectable{
+	vec3 point;
+	vec3 normal;
+
+	Plane(vec3 _point, vec3 _normal) {
+		point = _point;
+		normal = _normal;
+	}
+
+	Hit intersect(const Ray& ray) {
+		Hit hit;
+		float alignment = dot(ray.dir, normal);
+		if (alignment > 0) {
+			return hit;
+		}
+		vec3 to_point = point - ray.start;
+		float t = dot(to_point, normal) / alignment;
+		hit.t = t;
+		hit.position = ray.start + t * ray.dir;
+		hit.normal = normal;
+		return hit;
+	}
+};
+
+struct Solid : public Intersectable {
+	std::vector<Plane> faces;
+};
+
 class Camera {
 	vec3 eye, lookat, right, up;
 public:
@@ -74,7 +102,7 @@ struct Light {
 	}
 };
 
-float rnd() { return (float)rand() / RAND_MAX; }
+float rnd() { return (float)rand() / static_cast<float>(RAND_MAX); }
 
 const float epsilon = 0.0001f;
 
@@ -89,19 +117,20 @@ public:
 		float fov = 45 * M_PI / 180;
 		camera.set(eye, lookat, vup, fov);
 
-		La = vec3(0.4f, 0.4f, 0.4f);
+		La = vec3(0.0f, 0.0f, 0.0f);
 		vec3 lightDirection(1, 1, 1), Le(2, 2, 2);
 		lights.push_back(new Light(lightDirection, Le));
 
 		vec3 kd(0.3f, 0.2f, 0.1f), ks(2, 2, 2);
-		for (int i = 0; i < 500; i++) 
+		for (int i = 0; i < 30; i++) 
 			objects.push_back(new Sphere(vec3(rnd() - 0.5f, rnd() - 0.5f, rnd() - 0.5f), rnd() * 0.1f));
+		objects.push_back(new Plane(vec3(0.0f, 0.0f, 0.0f), normalize(vec3(1.0f, 1.0f, 1.0f))));
 	}
 
 	void render(std::vector<vec4>& image) {
-		for (int Y = 0; Y < windowHeight; Y++) {
+		for (uint Y = 0; Y < windowHeight; Y++) {
 #pragma omp parallel for
-			for (int X = 0; X < windowWidth; X++) {
+			for (uint X = 0; X < windowWidth; X++) {
 				vec3 color = trace(camera.getRay(X, Y));
 				image[Y * windowWidth + X] = vec4(color.x, color.y, color.z, 1);
 			}
@@ -137,6 +166,7 @@ public:
 				if (cosDelta > 0) outRadiance = outRadiance + light->Le * cosDelta;
 			}
 		}
+		outRadiance = vec3(0.2f, 0.2f, 0.2f) * (1 - dot(hit.normal, ray.dir));
 		return outRadiance;
 	}
 };
@@ -211,7 +241,7 @@ void onInitialization() {
 	long timeStart = glutGet(GLUT_ELAPSED_TIME);
 	scene.render(image);
 	long timeEnd = glutGet(GLUT_ELAPSED_TIME);
-	printf("Rendering time: %d milliseconds\n", (timeEnd - timeStart));
+	printf("Rendering time: %ld milliseconds\n", (timeEnd - timeStart));
 
 	// copy image to GPU as a texture
 	fullScreenTexturedQuad = new FullScreenTexturedQuad(windowWidth, windowHeight, image);
