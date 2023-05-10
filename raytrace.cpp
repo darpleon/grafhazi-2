@@ -3,16 +3,9 @@
 //=============================================================================================
 #include "framework.h"
 
-struct Material {
-	vec3 ka, kd, ks;
-	float  shininess;
-	Material(vec3 _kd, vec3 _ks, float _shininess) : ka(_kd * M_PI), kd(_kd), ks(_ks) { shininess = _shininess; }
-};
-
 struct Hit {
 	float t;
 	vec3 position, normal;
-	Material * material;
 	Hit() { t = -1; }
 };
 
@@ -23,7 +16,6 @@ struct Ray {
 
 class Intersectable {
 protected:
-	Material * material;
 public:
 	virtual Hit intersect(const Ray& ray) = 0;
 };
@@ -32,10 +24,9 @@ struct Sphere : public Intersectable {
 	vec3 center;
 	float radius;
 
-	Sphere(const vec3& _center, float _radius, Material* _material) {
+	Sphere(const vec3& _center, float _radius) {
 		center = _center;
 		radius = _radius;
-		material = _material;
 	}
 
 	Hit intersect(const Ray& ray) {
@@ -53,7 +44,6 @@ struct Sphere : public Intersectable {
 		hit.t = (t2 > 0) ? t2 : t1;
 		hit.position = ray.start + ray.dir * hit.t;
 		hit.normal = (hit.position - center) * (1.0f / radius);
-		hit.material = material;
 		return hit;
 	}
 };
@@ -104,9 +94,8 @@ public:
 		lights.push_back(new Light(lightDirection, Le));
 
 		vec3 kd(0.3f, 0.2f, 0.1f), ks(2, 2, 2);
-		Material * material = new Material(kd, ks, 50);
 		for (int i = 0; i < 500; i++) 
-			objects.push_back(new Sphere(vec3(rnd() - 0.5f, rnd() - 0.5f, rnd() - 0.5f), rnd() * 0.1f, material));
+			objects.push_back(new Sphere(vec3(rnd() - 0.5f, rnd() - 0.5f, rnd() - 0.5f), rnd() * 0.1f));
 	}
 
 	void render(std::vector<vec4>& image) {
@@ -137,15 +126,15 @@ public:
 	vec3 trace(Ray ray, int depth = 0) {
 		Hit hit = firstIntersect(ray);
 		if (hit.t < 0) return La;
-		vec3 outRadiance = hit.material->ka * La;
+		vec3 outRadiance = La;
 		for (Light * light : lights) {
 			Ray shadowRay(hit.position + hit.normal * epsilon, light->direction);
 			float cosTheta = dot(hit.normal, light->direction);
 			if (cosTheta > 0 && !shadowIntersect(shadowRay)) {	// shadow computation
-				outRadiance = outRadiance + light->Le * hit.material->kd * cosTheta;
+				outRadiance = outRadiance + light->Le * cosTheta;
 				vec3 halfway = normalize(-ray.dir + light->direction);
 				float cosDelta = dot(hit.normal, halfway);
-				if (cosDelta > 0) outRadiance = outRadiance + light->Le * hit.material->ks * powf(cosDelta, hit.material->shininess);
+				if (cosDelta > 0) outRadiance = outRadiance + light->Le * cosDelta;
 			}
 		}
 		return outRadiance;
