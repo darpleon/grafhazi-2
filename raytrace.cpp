@@ -84,12 +84,7 @@ struct Solid : public Intersectable {
     bool inverted;
 
     Solid(const std::vector<Plane>& _faces, bool _inverted = false)
-        : faces(_faces), inverted(_inverted)
-        
-    {
-        faces = _faces;
-        inverted = _inverted;
-    }
+        : faces(_faces), inverted(_inverted) {}
 
     void translate(vec3 d) {
         for (Plane& p : faces) {
@@ -119,6 +114,59 @@ struct Solid : public Intersectable {
             }
         }
         return Hit();
+    }
+};
+
+struct Cone : public Intersectable {
+    vec3 tip;
+    vec3 axis;
+    float cos2;
+    float height;
+
+    Cone(vec3 _tip, vec3 _axis, float _cos2, float _height)
+        : tip(_tip), axis(_axis), cos2(_cos2), height(_height) {}
+
+    Hit intersect(const Ray& ray) {
+        Hit hit;
+        vec3 r = ray.start - tip;
+        float ad = dot(axis, ray.dir);
+        float ar = dot(axis, r);
+        float a = ad * ad - cos2 * dot(ray.dir, ray.dir);
+        float m = (cos2 * dot(r, ray.dir) - ad * ar) / a;
+        float p = (ar * ar - cos2 * dot(r, r)) / a;
+        float disc = m * m - p;
+        if (disc > 0) {
+            float diff = sqrtf(disc);
+            float x = m - diff;
+            if (x < 0) {
+                x = m + diff;
+            }
+
+            vec3 pos = ray.start + x * ray.dir;
+            float h = dot(pos - tip, axis);
+            if (h > 0 && h < height) {
+                hit.t = x;
+                hit.position = pos;
+                vec3 along = pos - tip;
+
+                vec3 normal = 2 * dot(along, axis) * axis - 2 * cos2 * along;
+                hit.normal = normalize(normal);
+            }
+            else {
+                x = m + diff;
+                vec3 pos = ray.start + x * ray.dir;
+                float h = dot(pos - tip, axis);
+                if (h > 0 && h < height) {
+                    hit.t = x;
+                    hit.position = pos;
+                    vec3 along = pos - tip;
+
+                    vec3 normal = 2 * dot(along, axis) * axis - 2 * cos2 * along;
+                    hit.normal = normalize(normal);
+                }
+            }
+        }
+        return hit;
     }
 };
 
@@ -152,10 +200,10 @@ float rnd() { return (float)rand() / static_cast<float>(RAND_MAX); }
 
 class Scene {
     std::vector<Intersectable *> objects;
-    std::vector<Light *> lights;
-    Camera camera;
+    std::vector<Cone *> lights;
     vec3 La;
 public:
+    Camera camera;
     void build() {
         vec3 eye = vec3(0, 0, 2), vup = vec3(0, 1, 0), lookat = vec3(0, 0, 0);
         float fov = 45 * M_PI / 180;
@@ -163,10 +211,9 @@ public:
 
         La = vec3(0.0f, 0.0f, 0.0f);
         vec3 lightDirection(1, 1, 1), Le(2, 2, 2);
-        lights.push_back(new Light(lightDirection, Le));
 
         vec3 kd(0.3f, 0.2f, 0.1f), ks(2, 2, 2);
-        for (int i = 0; i < 30; i++) 
+        for (int i = 0; i < 20; i++) 
             objects.push_back(new Sphere(vec3(rnd() - 0.5f, rnd() - 0.5f, rnd() - 0.5f), rnd() * 0.1f));
         //objects.push_back(new Plane(vec3(0.0f, 0.0f, 0.0f), normalize(vec3(1.0f, 1.0f, 1.0f))));
         std::vector<Plane>faces1 = std::vector<Plane>();
@@ -180,6 +227,9 @@ public:
         Solid* cube = new Solid(faces1, true);
         // cube->translate(vec3(0.5,-0.5,0));
         objects.push_back(cube);
+        Cone * c1 = new Cone(vec3(0,0,0), normalize(vec3(-1,2,1)), 0.85, 0.3f);
+        objects.push_back(c1);
+        lights.push_back(c1);
         // objects.push_back(new Plane(vec3(0,-1,0)*0.5, vec3(0,-1,0)));
         // objects.push_back(new Plane(vec3(0,-1,0)*0.5, vec3(0,1,0)));
     }
@@ -213,17 +263,8 @@ public:
         Hit hit = firstIntersect(ray);
         if (hit.t < 0) return La;
         vec3 outRadiance = La;
-        for (Light * light : lights) {
-            Ray shadowRay(hit.position + hit.normal * epsilon, light->direction);
-            float cosTheta = dot(hit.normal, light->direction);
-            if (cosTheta > 0 && !shadowIntersect(shadowRay)) {  // shadow computation
-                outRadiance = outRadiance + light->Le * cosTheta;
-                vec3 halfway = normalize(-ray.dir + light->direction);
-                float cosDelta = dot(hit.normal, halfway);
-                if (cosDelta > 0) outRadiance = outRadiance + light->Le * cosDelta;
-            }
-        }
         outRadiance = vec3(0.2f, 0.2f, 0.2f) * (1 - dot(hit.normal, ray.dir));
+        // outRadiance = hit.normal;
         return outRadiance;
     }
 };
@@ -332,4 +373,16 @@ void onMouseMotion(int pX, int pY) {
 
 // Idle event indicating that some time elapsed: do animation here
 void onIdle() {
+    std::vector<vec4> image(windowWidth * windowHeight);
+    long timeStart = glutGet(GLUT_ELAPSED_TIME);
+    vec3 eye = 2*vec3(sinf(timeStart / 3000.0f), 0, cosf(timeStart / 3000.0f)), vup = vec3(0, 1, 0), lookat = vec3(0, 0, 0);
+    float fov = 45 * M_PI / 180;
+    scene.camera.set(eye, lookat, vup, fov);
+    scene.render(image);
+    long timeEnd = glutGet(GLUT_ELAPSED_TIME);
+    printf("Rendering time: %ld milliseconds\n", (timeEnd - timeStart));
+
+    // copy image to GPU as a texture
+    fullScreenTexturedQuad = new FullScreenTexturedQuad(windowWidth, windowHeight, image);
+    glutPostRedisplay();
 }
