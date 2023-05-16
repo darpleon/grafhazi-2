@@ -9,6 +9,7 @@ const float epsilon = 0.0001f;
 struct Hit {
     float t;
     vec3 position, normal;
+    bool cone = false;
     Hit() { t = -1; }
 };
 
@@ -23,34 +24,6 @@ public:
     virtual Hit intersect(const Ray& ray) = 0;
 };
 
-struct Sphere : public Intersectable {
-    vec3 center;
-    float radius;
-
-    Sphere(const vec3& _center, float _radius) {
-        center = _center;
-        radius = _radius;
-    }
-
-    Hit intersect(const Ray& ray) {
-        Hit hit;
-        vec3 dist = ray.start - center;
-        float a = dot(ray.dir, ray.dir);
-        float b = dot(dist, ray.dir) * 2.0f;
-        float c = dot(dist, dist) - radius * radius;
-        float discr = b * b - 4.0f * a * c;
-        if (discr < 0) return hit;
-        float sqrt_discr = sqrtf(discr);
-        float t1 = (-b + sqrt_discr) / 2.0f / a;    // t1 >= t2 for sure
-        float t2 = (-b - sqrt_discr) / 2.0f / a;
-        if (t1 <= 0) return hit;
-        hit.t = (t2 > 0) ? t2 : t1;
-        hit.position = ray.start + ray.dir * hit.t;
-        hit.normal = (hit.position - center) * (1.0f / radius);
-        return hit;
-    }
-};
-
 struct Plane : public Intersectable{
     vec3 point;
     vec3 normal;
@@ -60,6 +33,11 @@ struct Plane : public Intersectable{
         normal = _normal;
     }
 
+    Plane(vec3 vec) {
+        point = vec;
+        normal = normalize(vec);
+    }
+
     void translate(vec3 d) {
         point = point + d;
     }
@@ -67,9 +45,6 @@ struct Plane : public Intersectable{
     Hit intersect(const Ray& ray) {
         Hit hit;
         float alignment = dot(ray.dir, normal);
-        // if (alignment > 0) {
-        //  return hit;
-        // }
         vec3 to_point = point - ray.start;
         float t = dot(to_point, normal) / alignment;
         hit.t = t;
@@ -122,12 +97,17 @@ struct Cone : public Intersectable {
     vec3 axis;
     float cos2;
     float height;
+    vec3 light_position;
+    vec3 light_color;
 
-    Cone(vec3 _tip, vec3 _axis, float _cos2, float _height)
-        : tip(_tip), axis(_axis), cos2(_cos2), height(_height) {}
+    Cone(vec3 _tip, vec3 _axis, float _cos2, float _height, vec3 color)
+        : tip(_tip), axis(_axis), cos2(_cos2), height(_height), light_color(color) {
+        light_position = tip + 5 * epsilon * axis;
+    }
 
     Hit intersect(const Ray& ray) {
         Hit hit;
+        hit.cone = true;
         vec3 r = ray.start - tip;
         float ad = dot(axis, ray.dir);
         float ar = dot(axis, r);
@@ -187,49 +167,89 @@ public:
     }
 };
 
-struct Light {
-    vec3 direction;
-    vec3 Le;
-    Light(vec3 _direction, vec3 _Le) {
-        direction = normalize(_direction);
-        Le = _Le;
-    }
-};
-
 float rnd() { return (float)rand() / static_cast<float>(RAND_MAX); }
+
+std::vector<Cone*> lights = std::vector<Cone*>();
 
 class Scene {
     std::vector<Intersectable *> objects;
-    std::vector<Cone *> lights;
     vec3 La;
 public:
     Camera camera;
     void build() {
-        vec3 eye = vec3(0, 0, 2), vup = vec3(0, 1, 0), lookat = vec3(0, 0, 0);
+        vec3 eye = vec3(sinf(M_PI / 4.0f), 0, cosf(M_PI / 4.0f))*2;
+        vec3 vup = vec3(0, 1, 0), lookat = vec3(0, 0, 0);
         float fov = 45 * M_PI / 180;
         camera.set(eye, lookat, vup, fov);
 
         La = vec3(0.0f, 0.0f, 0.0f);
-        vec3 lightDirection(1, 1, 1), Le(2, 2, 2);
 
-        vec3 kd(0.3f, 0.2f, 0.1f), ks(2, 2, 2);
-        for (int i = 0; i < 20; i++) 
-            objects.push_back(new Sphere(vec3(rnd() - 0.5f, rnd() - 0.5f, rnd() - 0.5f), rnd() * 0.1f));
-        //objects.push_back(new Plane(vec3(0.0f, 0.0f, 0.0f), normalize(vec3(1.0f, 1.0f, 1.0f))));
         std::vector<Plane>faces1 = std::vector<Plane>();
-        float s2 = sqrtf(2.0f) / 2.0f;
         faces1.push_back(Plane(vec3(0,-1,0)*0.5, vec3(0,-1,0)));
         faces1.push_back(Plane(vec3(0,1,0)*0.5,vec3(0,1,0)));
-        faces1.push_back(Plane(vec3(s2,0,-1*s2)*0.5, vec3(s2,0,-1*s2)));
-        faces1.push_back(Plane(vec3(-1*s2,0,-1*s2)*0.5, vec3(-1*s2,0,-1*s2)));
-        faces1.push_back(Plane(vec3(s2,0,s2)*0.5, vec3(s2,0,s2)));
-        faces1.push_back(Plane(vec3(-1*s2,0,s2)*0.5, vec3(-1*s2,0,s2)));
+        faces1.push_back(Plane(vec3(-1,0,0)*0.5,vec3(-1,0,0)));
+        faces1.push_back(Plane(vec3(1,0,0)*0.5,vec3(1,0,0)));
+        faces1.push_back(Plane(vec3(0,0,1)*0.5,vec3(0,0,1)));
+        faces1.push_back(Plane(vec3(0,0,-1)*0.5,vec3(0,0,-1)));
         Solid* cube = new Solid(faces1, true);
         // cube->translate(vec3(0.5,-0.5,0));
         objects.push_back(cube);
-        Cone * c1 = new Cone(vec3(0,0,0), normalize(vec3(-1,2,1)), 0.85, 0.3f);
+
+        std::vector<Plane> faces2 = std::vector<Plane>();
+        float rphi = (sqrtf(5) - 1) / 2.0f;
+        float size = 0.1;
+        faces2.push_back(Plane(size * vec3(rphi, 0, 1)));
+        faces2.push_back(Plane(size * vec3(-rphi, 0, 1)));
+        faces2.push_back(Plane(size * vec3(rphi, 0, -1)));
+        faces2.push_back(Plane(size * vec3(-rphi, 0, -1)));
+        faces2.push_back(Plane(size * vec3(1, rphi, 0)));
+        faces2.push_back(Plane(size * vec3(1, -rphi, 0)));
+        faces2.push_back(Plane(size * vec3(-1, rphi, 0)));
+        faces2.push_back(Plane(size * vec3(-1, -rphi, 0)));
+        faces2.push_back(Plane(size * vec3(0, 1, rphi)));
+        faces2.push_back(Plane(size * vec3(0, 1, -rphi)));
+        faces2.push_back(Plane(size * vec3(0, -1, rphi)));
+        faces2.push_back(Plane(size * vec3(0, -1, -rphi)));
+        Solid* dodeca = new Solid(faces2);
+        dodeca->translate(vec3(0.2, size - 0.5, -0.3));
+        objects.push_back(dodeca);
+        
+        std::vector<Plane> faces3 = std::vector<Plane>();
+        float phi = (sqrtf(5) + 1) / 2.0f;
+        size = 0.1;
+        faces3.push_back(Plane(size * vec3(1, 1, 1)));
+        faces3.push_back(Plane(size * vec3(1, 1, -1)));
+        faces3.push_back(Plane(size * vec3(1, -1, 1)));
+        faces3.push_back(Plane(size * vec3(1, -1, -1)));
+        faces3.push_back(Plane(size * vec3(-1, 1, 1)));
+        faces3.push_back(Plane(size * vec3(-1, 1, -1)));
+        faces3.push_back(Plane(size * vec3(-1, -1, 1)));
+        faces3.push_back(Plane(size * vec3(-1, -1, -1)));
+        faces3.push_back(Plane(size * vec3(0, phi, 1 / phi)));
+        faces3.push_back(Plane(size * vec3(0, phi, -1 / phi)));
+        faces3.push_back(Plane(size * vec3(0, -phi, 1 / phi)));
+        faces3.push_back(Plane(size * vec3(0, -phi, -1 / phi)));
+        faces3.push_back(Plane(size * vec3(phi, 1 / phi, 0)));
+        faces3.push_back(Plane(size * vec3(phi, -1 / phi, 0)));
+        faces3.push_back(Plane(size * vec3(-phi, 1 / phi, 0)));
+        faces3.push_back(Plane(size * vec3(-phi, -1 / phi, 0)));
+        faces3.push_back(Plane(size * vec3(1 / phi, 0, phi)));
+        faces3.push_back(Plane(size * vec3(-1 / phi, 0, phi)));
+        faces3.push_back(Plane(size * vec3(1 / phi, 0, -phi)));
+        faces3.push_back(Plane(size * vec3(-1 / phi, 0, -phi)));
+        Solid* icosa = new Solid(faces3);
+        icosa->translate(vec3(-0.1, size * phi - 0.5, 0.1));
+        objects.push_back(icosa);
+
+        Cone * c1 = new Cone(vec3(0,1,0)*0.5, vec3(0,1,0)*-1, 0.85, 0.15f, vec3(0.3,0,0));
+        Cone * c2 = new Cone(vec3(-1,0,0)*0.5, vec3(-1,0,0)*-1, 0.75, 0.15f, vec3(0,0.3,0));
+        Cone * c3 = new Cone(vec3(0,0,-1)*0.5, vec3(0,0,-1)*-1, 0.95, 0.15f, vec3(0,0,0.3));
         objects.push_back(c1);
         lights.push_back(c1);
+        objects.push_back(c2);
+        lights.push_back(c2);
+        objects.push_back(c3);
+        lights.push_back(c3);
         // objects.push_back(new Plane(vec3(0,-1,0)*0.5, vec3(0,-1,0)));
         // objects.push_back(new Plane(vec3(0,-1,0)*0.5, vec3(0,1,0)));
     }
@@ -254,17 +274,20 @@ public:
         return bestHit;
     }
 
-    bool shadowIntersect(Ray ray) { // for directional lights
-        for (Intersectable * object : objects) if (object->intersect(ray).t > 0) return true;
-        return false;
-    }
-
-    vec3 trace(Ray ray, int depth = 0) {
+    vec3 trace(Ray ray) {
         Hit hit = firstIntersect(ray);
         if (hit.t < 0) return La;
         vec3 outRadiance = La;
         outRadiance = vec3(0.2f, 0.2f, 0.2f) * (1 - dot(hit.normal, ray.dir));
-        // outRadiance = hit.normal;
+        for (Cone* c : lights) {
+            vec3 to_object = hit.position + epsilon * hit.normal - c->light_position;
+            float distance = length(to_object);
+            Ray ray = Ray(c->light_position, normalize(to_object));
+            Hit first = firstIntersect(ray);
+            if (first.t > distance) {
+                outRadiance = outRadiance + c->light_color / (distance * distance);
+            }
+        }
         return outRadiance;
     }
 };
@@ -365,6 +388,22 @@ void onKeyboardUp(unsigned char key, int pX, int pY) {
 
 // Mouse click event
 void onMouse(int button, int state, int pX, int pY) {
+    Hit hit = scene.firstIntersect(scene.camera.getRay(pX, windowHeight-pY));
+    if (hit.t > 0 && !hit.cone) {
+        Cone * closest = lights[0];
+        for (Cone* c : lights) {
+            if (length(c->tip - hit.position) < length(closest->tip - hit.position)) {
+                closest = c;
+            }
+        }
+        closest->tip = hit.position;
+        closest->axis = hit.normal;
+        closest-> light_position = hit.position + 5 * epsilon * hit.normal;
+        std::vector<vec4> image(windowWidth * windowHeight);
+        scene.render(image);
+        fullScreenTexturedQuad = new FullScreenTexturedQuad(windowWidth, windowHeight, image);
+        glutPostRedisplay();
+    }
 }
 
 // Move mouse with key pressed
@@ -373,16 +412,4 @@ void onMouseMotion(int pX, int pY) {
 
 // Idle event indicating that some time elapsed: do animation here
 void onIdle() {
-    std::vector<vec4> image(windowWidth * windowHeight);
-    long timeStart = glutGet(GLUT_ELAPSED_TIME);
-    vec3 eye = 2*vec3(sinf(timeStart / 3000.0f), 0, cosf(timeStart / 3000.0f)), vup = vec3(0, 1, 0), lookat = vec3(0, 0, 0);
-    float fov = 45 * M_PI / 180;
-    scene.camera.set(eye, lookat, vup, fov);
-    scene.render(image);
-    long timeEnd = glutGet(GLUT_ELAPSED_TIME);
-    printf("Rendering time: %ld milliseconds\n", (timeEnd - timeStart));
-
-    // copy image to GPU as a texture
-    fullScreenTexturedQuad = new FullScreenTexturedQuad(windowWidth, windowHeight, image);
-    glutPostRedisplay();
 }
